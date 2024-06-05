@@ -1,6 +1,6 @@
-# Project Title
+## PETnessPal
 
-PETnessPal - ESP32
+This is a project for managing pet feeding schedules and weight tracking using an ESP32, HX711 ADC, and Firebase Realtime Database.
 
 ## Description
 
@@ -13,7 +13,7 @@ To get started with the PETnessPal App on ESP32, follow these steps:
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/your-username/your-repo.git
+   git clone https://github.com/ProgrammerJM/PETnessPal_App_ESP32.git
    ```
 
 2. Install the required libraries. Open the PlatformIO project in your preferred IDE and navigate to the project directory. Run the following commands in the terminal:
@@ -34,7 +34,7 @@ To get started with the PETnessPal App on ESP32, follow these steps:
 
 7. The PETnessPal App is now ready to use with your ESP32 board.
 
-### Dependencies
+## Dependencies
 
 Library used:
 
