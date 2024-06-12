@@ -4,12 +4,13 @@
 #include <WiFi.h>
 #include <time.h>
 #include <ctime>
+#include <esp_now.h>
 
 using namespace std;
 
 // Definitions for WiFi
-const char *WIFI_SSID = "Winterfell";
-const char *WIFI_PASSWORD = "8zcMUsq5";
+const char *WIFI_SSID = "Tabaranza_WIFI";
+const char *WIFI_PASSWORD = "Gabby1713";
 
 // Definitions for Firebase Database
 const char *FIREBASE_HOST = "https://petness-92c55-default-rtdb.asia-southeast1.firebasedatabase.app/";
@@ -35,6 +36,19 @@ const int HX711_dout = 13;
 const int HX711_sck = 27;
 HX711_ADC LoadCell(HX711_dout, HX711_sck);
 
+// // Definitions for ESP-NOW
+// uint8_t broadcastAddress[] = {0x24, 0x0A, 0xC4, 0xB7, 0x8D, 0xA8}; // Replace with your peer's MAC address
+uint8_t broadcastAddress[] = {0xA0, 0xA3, 0xB3, 0x29, 0xC0, 0x38}; //A0:A3:B3:29:C0:38
+
+typedef struct struct_message {
+    char userName[32];
+    float amountToDispense;
+    char scheduledDate[11];
+    char scheduledTime[6];
+} struct_message;
+
+struct_message myData;
+
 // Declare the FirebaseData objects at the global scope
 FirebaseData fbdo1;
 FirebaseData fbdo2;
@@ -48,6 +62,7 @@ FirebaseJson content;
 // Declare the paths at the global scope
 String pathGetPetWeight = "/trigger/getPetWeight/status";
 String pathAmountToDispense = "/petFeedingSchedule";
+String pathPetFeederLog = "petFeederData/petFeederLog";
 
 void petWeightTare()
 {
@@ -66,6 +81,56 @@ void petWeightTare()
     Serial.println("Startup + tare is complete");
   }
 }
+
+void onDataRecv(const uint8_t *mac_addr, const uint8_t *incomingData, int len) {
+    Serial.println("Data received");
+    memcpy(&myData, incomingData, sizeof(myData));
+    Serial.printf("User: %s\n", myData.userName);
+    Serial.printf("Amount: %f\n", myData.amountToDispense);
+    Serial.printf("Date: %s\n", myData.scheduledDate);
+    Serial.printf("Time: %s\n", myData.scheduledTime);
+}
+
+void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+    Serial.print("\r\nLast Packet Send Status:\t");
+    Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
+}
+
+void setupESPNow() {
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("Error initializing ESP-NOW");
+        return;
+    }
+    Serial.println("ESP-NOW Initialized.");
+
+    esp_now_register_send_cb(onDataSent);
+    esp_now_register_recv_cb(onDataRecv);
+
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(peerInfo.peer_addr, broadcastAddress, 6);
+    peerInfo.channel = 0;
+    peerInfo.encrypt = false;
+
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+        Serial.println("Failed to add peer");
+        return;
+    }
+}
+
+void sendData(const char* userName, float amountToDispense, const char* scheduledDate, const char* scheduledTime) {
+    strcpy(myData.userName, userName);
+    myData.amountToDispense = amountToDispense;
+    strcpy(myData.scheduledDate, scheduledDate);
+    strcpy(myData.scheduledTime, scheduledTime);
+
+    esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
+    if (result == ESP_OK) {
+        Serial.println("Sent with success");
+    } else {
+        Serial.println("Error sending the data");
+    }
+}
+
 
 float samplesForGettingWeight()
 {
@@ -514,8 +579,7 @@ void setup()
   config.host = FIREBASE_HOST;
   config.signer.tokens.legacy_token = FIREBASE_AUTH;
   /* Assign the api key (required) */
-  config.api_key = API_KEY;
-
+  config.api_key = API_KEY; 
   /* Assign the user sign in credentials */
   auth.user.email = USER_EMAIL;
   auth.user.password = USER_PASSWORD;
@@ -535,6 +599,7 @@ void setup()
     Serial.print("Stream begin failed, reason: ");
     Serial.println(fbdo1.errorReason());
   }
+  setupESPNow();
 }
 
 unsigned long lastPetWeightStreamTime = 0;
