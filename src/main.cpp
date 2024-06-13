@@ -39,6 +39,7 @@ HX711_ADC LoadCell(HX711_dout, HX711_sck);
 // Define the struct to hold the data
 typedef struct struct_message
 {
+  String userName;
   float amountToDispense;
 } struct_message;
 
@@ -77,8 +78,10 @@ void petWeightTare()
 }
 
 // Function to send data via HTTP
-void sendData(float amountToDispense)
+void sendData(String userName, float amountToDispense)
 {
+  static bool errorReceived = false;
+
   if (WiFi.status() == WL_CONNECTED)
   {
     HTTPClient http;
@@ -86,7 +89,9 @@ void sendData(float amountToDispense)
     http.begin(serverName);
     http.addHeader("Content-Type", "application/json");
 
-    String jsonPayload = "{\"amountToDispense\": ";
+    String jsonPayload = "{\"userName\": \"";
+    jsonPayload.concat(userName);
+    jsonPayload.concat("\", \"amountToDispense\": ");
     jsonPayload.concat(String(amountToDispense));
     jsonPayload.concat("}");
 
@@ -107,6 +112,7 @@ void sendData(float amountToDispense)
     {
       Serial.print("Error code: ");
       Serial.println(httpResponseCode);
+      errorReceived = true;
     }
 
     http.end();
@@ -381,7 +387,7 @@ void scheduledDispenseFood(String userName, float amountToDispense, String sched
       // Send the data to the dispensing ESP32
       // sendData(userName.c_str(), amountToDispense, scheduledDate.c_str(), scheduledTime.c_str());
       Serial.println("Food is being dispensed");
-      sendData(amountToDispense);
+      sendData(userName.c_str(), amountToDispense);
       Serial.println("Food dispensed successfully");
 
       // Record the feeding data to Firestore
@@ -447,7 +453,7 @@ void smartDispenseFood(String userName, float totalAmount, int servings)
 
     // Send the data to the dispensing ESP32
     // sendData(userName.c_str(), amountToDispense, scheduledDate.c_str(), scheduledTime.c_str());
-    sendData(amountToDispense);
+    sendData(userName.c_str(), amountToDispense);
 
     // Record the feeding data to Firestore
     recordFeedingDataToFirestore("smartRecord", userName, amountToDispense, scheduledDate, scheduledTime);
