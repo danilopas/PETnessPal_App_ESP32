@@ -4,7 +4,7 @@
 #include <WiFi.h>
 #include <time.h>
 #include <ctime>
-#include <HTTPClient.h>
+#include <esp_now.h>
 
 using namespace std;
 
@@ -22,7 +22,7 @@ const char *FIREBASE_FIRESTORE_HOST = "petness-92c55";
 // Define the API Key
 const char *API_KEY = "AIzaSyDPcMRU9x421wP0cS1sRHwEvi57W8NoLiE";
 
-// Define the user Email and password that already registerd or added in your project
+// Define the user Email and password that alreadey registerd or added in your project
 const char *USER_EMAIL = "petnessadmin@gmail.com";
 const char *USER_PASSWORD = "petness";
 
@@ -36,11 +36,15 @@ const int HX711_dout = 13;
 const int HX711_sck = 27;
 HX711_ADC LoadCell(HX711_dout, HX711_sck);
 
-// Define the struct to hold the data
-typedef struct struct_message
-{
-  String userName;
-  float amountToDispense;
+// // Definitions for ESP-NOW
+// uint8_t broadcastAddress[] = {0x24, 0x0A, 0xC4, 0xB7, 0x8D, 0xA8}; // Replace with your peer's MAC address
+uint8_t broadcastAddress[] = {0xA0, 0xA3, 0xB3, 0x29, 0xC0, 0x38}; //A0:A3:B3:29:C0:38
+
+typedef struct struct_message {
+    char userName[32];
+    float amountToDispense;
+    char scheduledDate[11];
+    char scheduledTime[6];
 } struct_message;
 
 struct_message myData;
@@ -58,6 +62,7 @@ FirebaseJson content;
 // Declare the paths at the global scope
 String pathGetPetWeight = "/trigger/getPetWeight/status";
 String pathAmountToDispense = "/petFeedingSchedule";
+String pathPetFeederLog = "petFeederData/petFeederLog";
 
 void petWeightTare()
 {
@@ -77,79 +82,55 @@ void petWeightTare()
   }
 }
 
-String receivedPetID = ""; // Declare receivedPetID as a global variable
-
-// Function to send data via HTTP
-void sendData(String userName, float amountToDispense)
-{
-  static bool errorReceived = false;
-
-  if (WiFi.status() == WL_CONNECTED)
-  {
-    HTTPClient http;
-    String serverName = "http://192.168.1.20/receive"; // Replace with your receiver's IP address and endpoint
-    http.begin(serverName);
-    http.addHeader("Content-Type", "application/json");
-
-    String jsonPayload = "{\"userName\": \"";
-    jsonPayload.concat(userName);
-    jsonPayload.concat("\", \"amountToDispense\": ");
-    jsonPayload.concat(String(amountToDispense));
-    jsonPayload.concat("}");
-
-    int httpResponseCode = http.POST(jsonPayload);
-
-    // if (httpResponseCode > 0)
-    // {
-    //   String response = http.getString();
-    //   String httpResponse = "HTTP Response code: ";
-    //   httpResponse.concat(String(httpResponseCode));
-    //   Serial.println(httpResponse);
-
-    //   String responseOutput = "Response: ";
-    //   responseOutput.concat(response);
-    //   Serial.println(responseOutput);
-    // }
-    if (httpResponseCode > 0)
-    {
-      String response = http.getString();
-      String httpResponse = "HTTP Response code: ";
-      httpResponse.concat(String(httpResponseCode));
-      Serial.println(httpResponse);
-
-      // Parse the JSON response
-      StaticJsonDocument<200> jsonDoc;
-      DeserializationError error = deserializeJson(jsonDoc, response);
-
-      if (error)
-      {
-        Serial.println("Failed to parse JSON");
-      }
-      else
-      {
-        receivedPetID = jsonDoc["receivedPetID"].as<String>(); // Store receivedPetID
-        Serial.print("Received petID: ");
-        Serial.println(receivedPetID);
-      }
-
-      String responseOutput = "Response: ";
-      responseOutput.concat(response);
-      Serial.println(responseOutput);
-    }
-    else
-    {
-      Serial.print("Error code: ");
-      Serial.println(httpResponseCode);
-      errorReceived = true;
-    }
-
-    http.end();
-  }
-  else
-  {
-    Serial.println("WiFi not connected");
-  };
+void onDataRecv(const uint8_t *mac_addr, const uint8_t *incomingData, int len) {
+    Serial.println("Data received");
+    memcpy(&myData, incomingData, sizeof(myData));
+    Serial.printf("User: %s\n", myData.userName);
+    Serial.printf("Amount: %f\n", myData.amountToDispense);
+    Serial.printf("Date: %s\n", myData.scheduledDate);
+    Serial.printf("Time: %s\n", myData.scheduledTime);
 }
+
+void onDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+    Serial.print("\r\nLast Packet Send Status:\t");
+    Serial.println(status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
+}
+
+void setupESPNow() {
+    if (esp_now_init() != ESP_OK) {
+        Serial.println("Error initializing ESP-NOW");
+        return;
+    }
+    Serial.println("ESP-NOW Initialized.");
+
+    esp_now_register_send_cb(onDataSent);
+    esp_now_register_recv_cb(onDataRecv);
+
+    esp_now_peer_info_t peerInfo = {};
+    memcpy(peerInfo.peer_addr, broadcastAddress, 6);
+    peerInfo.channel = 0;
+    peerInfo.encrypt = false;
+
+    if (esp_now_add_peer(&peerInfo) != ESP_OK) {
+        Serial.println("Failed to add peer");
+        return;
+    }
+}
+
+void sendData(const char* userName, float amountToDispense, const char* scheduledDate, const char* scheduledTime) {
+    strcpy(myData.userName, userName);
+    myData.amountToDispense = amountToDispense;
+    strcpy(myData.scheduledDate, scheduledDate);
+    strcpy(myData.scheduledTime, scheduledTime);
+
+    esp_err_t result = esp_now_send(broadcastAddress, (uint8_t *) &myData, sizeof(myData));
+    if (result == ESP_OK) {
+        Serial.println("Sent with success");
+    } else {
+        Serial.println("Error sending the data");
+    }
+}
+
 
 float samplesForGettingWeight()
 {
@@ -295,17 +276,7 @@ int getCurrentMin()
   return timeinfo.tm_min;
 }
 
-String generateUniqueId()
-{
-  String uniqueId = "";
-  for (int i = 0; i < 20; i++)
-  {
-    uniqueId += String(random(0, 10));
-  }
-  return uniqueId;
-}
-
-void recordFeedingDataToFirestore(const String &mode, const String &userName, float amount, const String &scheduleDate, const String &scheduledTime, String petID)
+void recordFeedingDataToFirestore(const String &mode, const String &userName, float amount, const String &scheduleDate, const String &scheduledTime)
 {
   content.clear(); // Clear previous content to avoid conflicts
   content.set("fields/mode/stringValue", mode);
@@ -313,13 +284,13 @@ void recordFeedingDataToFirestore(const String &mode, const String &userName, fl
   content.set("fields/amount/doubleValue", amount);
   content.set("fields/date/stringValue", scheduleDate);
   content.set("fields/time/stringValue", scheduledTime);
-  content.set("fields/petID/stringValue", petID);
 
-  String recordId = generateUniqueId();
+  // String recordId = generateUniqueId();
   String documentPath = "/pets/";
   documentPath.concat(userName);
   documentPath.concat("/records/");
   documentPath.concat("/");
+  documentPath.concat(mode);
 
   Serial.print("Document path: ");
   Serial.println(documentPath);
@@ -413,21 +384,14 @@ void scheduledDispenseFood(String userName, float amountToDispense, String sched
       delay(1000); // 1 second delay
 
       // Add your code here to dispense the food
-      // Send the data to the dispensing ESP32
-      // sendData(userName.c_str(), amountToDispense, scheduledDate.c_str(), scheduledTime.c_str());
       Serial.println("Food is being dispensed");
-      sendData(userName.c_str(), amountToDispense);
       Serial.println("Food dispensed successfully");
-
-      // Print receivedPetID
-      Serial.print("Accessing receivedPetID in scheduledDispenseFood: ");
-      Serial.println(receivedPetID);
-
-      // Record the feeding data to Firestore
-      recordFeedingDataToFirestore("scheduledRecord", userName, amount, scheduledDate, scheduledTime, receivedPetID);
 
       hasRun = true;
       recordHasRun = true; // Set recordHasRun flag
+
+      // Record the feeding data to Firestore
+      recordFeedingDataToFirestore("scheduledRecord", userName, amount, scheduledDate, scheduledTime);
     }
   }
   else if ((currentDateStr > scheduledDate) && currentHour > scheduledHour || currentMin > scheduledMin)
@@ -451,7 +415,7 @@ void smartDispenseFood(String userName, float totalAmount, int servings)
 
   Serial.println("smartDispenseFood function called");
 
-  float amountToDispense = totalAmount / servings;
+  float amount = totalAmount / servings;
   int currentHour = getCurrentHour();
   String scheduledDate = getCurrentDate();
   String scheduledTime = getCurrentTime();
@@ -479,17 +443,13 @@ void smartDispenseFood(String userName, float totalAmount, int servings)
   if (shouldDispense && currentHour != lastDispensedHour)
   {
     Serial.print("Dispensing ");
-    Serial.print(amountToDispense);
+    Serial.print(amount);
     Serial.print(" at ");
     Serial.print(currentHour);
     Serial.println(":00");
 
-    // Send the data to the dispensing ESP32
-    // sendData(userName.c_str(), amountToDispense, scheduledDate.c_str(), scheduledTime.c_str());
-    sendData(userName.c_str(), amountToDispense);
-
     // Record the feeding data to Firestore
-    recordFeedingDataToFirestore("smartRecord", userName, amountToDispense, scheduledDate, scheduledTime, receivedPetID);
+    recordFeedingDataToFirestore("smartRecord", userName, amount, scheduledDate, scheduledTime);
 
     lastDispensedHour = currentHour;
     hasRun = true;
@@ -619,7 +579,7 @@ void setup()
   config.host = FIREBASE_HOST;
   config.signer.tokens.legacy_token = FIREBASE_AUTH;
   /* Assign the api key (required) */
-  config.api_key = API_KEY;
+  config.api_key = API_KEY; 
   /* Assign the user sign in credentials */
   auth.user.email = USER_EMAIL;
   auth.user.password = USER_PASSWORD;
@@ -639,6 +599,7 @@ void setup()
     Serial.print("Stream begin failed, reason: ");
     Serial.println(fbdo1.errorReason());
   }
+  setupESPNow();
 }
 
 unsigned long lastPetWeightStreamTime = 0;
