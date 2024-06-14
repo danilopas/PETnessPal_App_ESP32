@@ -77,6 +77,8 @@ void petWeightTare()
   }
 }
 
+String receivedPetID = ""; // Declare receivedPetID as a global variable
+
 // Function to send data via HTTP
 void sendData(String userName, float amountToDispense)
 {
@@ -97,12 +99,38 @@ void sendData(String userName, float amountToDispense)
 
     int httpResponseCode = http.POST(jsonPayload);
 
+    // if (httpResponseCode > 0)
+    // {
+    //   String response = http.getString();
+    //   String httpResponse = "HTTP Response code: ";
+    //   httpResponse.concat(String(httpResponseCode));
+    //   Serial.println(httpResponse);
+
+    //   String responseOutput = "Response: ";
+    //   responseOutput.concat(response);
+    //   Serial.println(responseOutput);
+    // }
     if (httpResponseCode > 0)
     {
       String response = http.getString();
       String httpResponse = "HTTP Response code: ";
       httpResponse.concat(String(httpResponseCode));
       Serial.println(httpResponse);
+
+      // Parse the JSON response
+      StaticJsonDocument<200> jsonDoc;
+      DeserializationError error = deserializeJson(jsonDoc, response);
+
+      if (error)
+      {
+        Serial.println("Failed to parse JSON");
+      }
+      else
+      {
+        receivedPetID = jsonDoc["receivedPetID"].as<String>(); // Store receivedPetID
+        Serial.print("Received petID: ");
+        Serial.println(receivedPetID);
+      }
 
       String responseOutput = "Response: ";
       responseOutput.concat(response);
@@ -120,7 +148,7 @@ void sendData(String userName, float amountToDispense)
   else
   {
     Serial.println("WiFi not connected");
-  }
+  };
 }
 
 float samplesForGettingWeight()
@@ -277,7 +305,7 @@ String generateUniqueId()
   return uniqueId;
 }
 
-void recordFeedingDataToFirestore(const String &mode, const String &userName, float amount, const String &scheduleDate, const String &scheduledTime)
+void recordFeedingDataToFirestore(const String &mode, const String &userName, float amount, const String &scheduleDate, const String &scheduledTime, String petID)
 {
   content.clear(); // Clear previous content to avoid conflicts
   content.set("fields/mode/stringValue", mode);
@@ -285,6 +313,7 @@ void recordFeedingDataToFirestore(const String &mode, const String &userName, fl
   content.set("fields/amount/doubleValue", amount);
   content.set("fields/date/stringValue", scheduleDate);
   content.set("fields/time/stringValue", scheduledTime);
+  content.set("fields/petID/stringValue", petID);
 
   String recordId = generateUniqueId();
   String documentPath = "/pets/";
@@ -390,8 +419,12 @@ void scheduledDispenseFood(String userName, float amountToDispense, String sched
       sendData(userName.c_str(), amountToDispense);
       Serial.println("Food dispensed successfully");
 
+      // Print receivedPetID
+      Serial.print("Accessing receivedPetID in scheduledDispenseFood: ");
+      Serial.println(receivedPetID);
+
       // Record the feeding data to Firestore
-      recordFeedingDataToFirestore("scheduledRecord", userName, amount, scheduledDate, scheduledTime);
+      recordFeedingDataToFirestore("scheduledRecord", userName, amount, scheduledDate, scheduledTime, receivedPetID);
 
       hasRun = true;
       recordHasRun = true; // Set recordHasRun flag
@@ -456,7 +489,7 @@ void smartDispenseFood(String userName, float totalAmount, int servings)
     sendData(userName.c_str(), amountToDispense);
 
     // Record the feeding data to Firestore
-    recordFeedingDataToFirestore("smartRecord", userName, amountToDispense, scheduledDate, scheduledTime);
+    recordFeedingDataToFirestore("smartRecord", userName, amountToDispense, scheduledDate, scheduledTime, receivedPetID);
 
     lastDispensedHour = currentHour;
     hasRun = true;
